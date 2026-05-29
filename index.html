@@ -119,7 +119,7 @@
       <div id="game-players" class="players-list" style="margin:0; flex:1;"></div>
       <div style="white-space:nowrap; margin-left:12px;">Tour <span id="turn-num">1</span> / <span id="turn-total">?</span></div>
     </div>
-    <div class="timer-bar"><div class="timer-fill" id="timer-fill" style="width:100%"></div></div>
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:1rem;"><div class="timer-bar" style="flex:1; margin-bottom:0;"><div class="timer-fill" id="timer-fill" style="width:100%"></div></div><div id="timer-secs" style="font-size:14px; font-weight:600; min-width:36px; text-align:right; color:#534ab7;">90s</div></div>
     <div class="game-layout">
       <div class="game-canvas-area">
         <div id="drawing-panel">
@@ -129,6 +129,7 @@
             <div id="colors" style="display:flex; gap:4px;"></div>
             <div id="sizes" style="display:flex; gap:4px;"></div>
             <button class="btn btn-sm" onclick="clearCanvas(true)">🗑 Effacer</button>
+            <button class="btn btn-sm" style="background:#fff3cd; border-color:#f0ad4e; color:#7a5000;" onclick="skipWord()">⏭ Passer</button>
           </div>
           <canvas id="canvas" width="580" height="340"></canvas>
         </div>
@@ -136,8 +137,10 @@
           <div class="word-count" style="margin-bottom:6px;">Devine ce que dessine <span id="drawer-name-label" style="color:#534ab7;font-weight:600;"></span> !</div>
           <canvas id="canvas-view" width="580" height="340"></canvas>
         </div>
+        <div id="word-history" style="margin-top:10px; display:flex; flex-wrap:wrap; gap:6px; min-height:28px;"></div>
       </div>
       <div class="game-sidebar">
+        <div id="live-scores" style="margin-bottom:10px; background:#fff; border:1px solid #e0dfd8; border-radius:8px; padding:8px;"></div>
         <div class="chat" id="chat"></div>
         <div style="display:flex; gap:6px;">
           <input type="text" id="guess-input" placeholder="Ta réponse..." style="flex:1; margin:0;" onkeydown="if(event.key==='Enter') sendGuess()" />
@@ -152,6 +155,7 @@
     <div class="card" style="max-width:480px; margin: 2rem auto;">
       <div style="font-size:22px; font-weight:600; margin-bottom:1rem; text-align:center;">🏆 Résultats</div>
       <table class="scoreboard" id="scoreboard"></table>
+      <div id="score-recap"></div>
       <div style="margin-top:1rem; display:flex; gap:8px;">
         <button class="btn btn-primary btn-full" onclick="backToLobby()">🔄 Rejouer</button>
       </div>
@@ -308,7 +312,9 @@ function startGame() {
       currentWord: pickWord(),
       turnStart: Date.now(),
       strokes: null,
-      guesses: null
+      guesses: null,
+      wordHistory: null,
+      turnHistory: null
     });
   });
 }
@@ -374,9 +380,11 @@ function startTimer(turnStart) {
   const fill = document.getElementById('timer-fill');
   timerInterval = setInterval(() => {
     const elapsed = (Date.now() - turnStart) / 1000;
-    const remaining = Math.max(0, 60 - elapsed);
-    fill.style.width = ((remaining / 60) * 100) + '%';
-    fill.className = 'timer-fill' + (remaining < 15 ? ' urgent' : '');
+    const remaining = Math.max(0, 90 - elapsed);
+    fill.style.width = ((remaining / 90) * 100) + '%';
+    const secs = document.getElementById('timer-secs');
+    if (secs) { secs.textContent = Math.ceil(remaining) + 's'; secs.style.color = remaining < 20 ? '#e24b4a' : '#534ab7'; }
+    fill.className = 'timer-fill' + (remaining < 20 ? ' urgent' : '');
     if (remaining <= 0) {
       clearInterval(timerInterval);
       if (isDrawer) advanceTurn();
@@ -390,15 +398,26 @@ function advanceTurn() {
     if (!room) return;
     const next = (room.currentTurn || 0) + 1;
     if (next >= (room.turnOrder || []).length) {
-      db.ref('rooms/' + roomId).update({ status: 'scores' });
+      db.ref('rooms/' + roomId + '/wordHistory').once('value').then(histSnap => {
+        const history = histSnap.val() || null;
+        const updates = { status: 'scores', wordHistory: null };
+        if (history) updates['turnHistory/' + (next - 1)] = history;
+        db.ref('rooms/' + roomId).update(updates);
+      });
     } else {
-      db.ref('rooms/' + roomId).update({
-        currentTurn: next,
-        wordsGuessed: 0,
-        currentWord: pickWord(),
-        turnStart: Date.now(),
-        strokes: null,
-        guesses: null
+      db.ref('rooms/' + roomId + '/wordHistory').once('value').then(histSnap => {
+        const history = histSnap.val() || null;
+        const updates = {
+          currentTurn: next,
+          wordsGuessed: 0,
+          currentWord: pickWord(),
+          turnStart: Date.now(),
+          strokes: null,
+          guesses: null,
+          wordHistory: null
+        };
+        if (history) updates['turnHistory/' + (next - 1)] = history;
+        db.ref('rooms/' + roomId).update(updates);
       });
     }
   });
@@ -425,6 +444,16 @@ function listenGameEvents() {
   // Words guessed counter
   on(db.ref('rooms/' + roomId + '/wordsGuessed'), 'value', snap => {
     if (isDrawer) document.getElementById('word-count').textContent = 'Mots devinés : ' + (snap.val() || 0);
+  });
+
+  // Live scores
+  on(db.ref('rooms/' + roomId + '/players'), 'value', snap => {
+    updateLiveScores(snap.val() || {});
+  });
+
+  // Word history
+  on(db.ref('rooms/' + roomId + '/wordHistory'), 'value', snap => {
+    updateWordHistory(snap.val());
   });
 
   // Chat / guesses
@@ -459,6 +488,51 @@ function listenGameEvents() {
   });
 }
 
+// ── LIVE SCORES ───────────────────────────────────────────────────
+function updateLiveScores(players) {
+  const div = document.getElementById('live-scores');
+  if (!div) return;
+  const sorted = Object.entries(players).sort((a, b) => b[1].score - a[1].score);
+  const medals = ['🥇','🥈','🥉'];
+  div.innerHTML = '<div style="font-size:12px;color:#888780;font-weight:500;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">Scores</div>' +
+    sorted.map(([pid, p], i) => {
+      const isMe = pid === myId;
+      const isDrawing = pid === currentDrawerId;
+      const medal = medals[i] || (i + 1);
+      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:3px 0;${i < sorted.length-1 ? 'border-bottom:1px solid #f0efe8;' : ''}">
+        <div style="display:flex;align-items:center;gap:6px;font-size:13px;${isMe ? 'font-weight:600;' : ''}">
+          <span>${medal}</span>
+          <span style="${isDrawing ? 'color:#534ab7;' : ''}">${isDrawing ? '🖌 ' : ''}${p.name}</span>
+        </div>
+        <span style="font-size:13px;font-weight:600;color:${p.score > 0 ? '#0f6e56' : '#888780'};">${p.score}</span>
+      </div>`;
+    }).join('');
+}
+
+// ── WORD HISTORY ──────────────────────────────────────────────────
+function updateWordHistory(words) {
+  const div = document.getElementById('word-history');
+  if (!div) return;
+  if (!words) { div.innerHTML = ''; return; }
+  const entries = Object.values(words).sort((a, b) => a.ts - b.ts);
+  div.innerHTML = entries.map(w => {
+    const guessed = w.status === 'guessed';
+    const bg = guessed ? '#e1f5ee' : '#fcebeb';
+    const color = guessed ? '#0f6e56' : '#a32d2d';
+    const border = guessed ? '#5dcaa5' : '#f09595';
+    const icon = guessed ? '✅' : '❌';
+    return `<span style="padding:3px 10px; border-radius:99px; font-size:12px; font-weight:500; background:${bg}; color:${color}; border:1px solid ${border};">${icon} ${w.word}</span>`;
+  }).join('');
+}
+
+// ── SKIP WORD ─────────────────────────────────────────────────────
+function skipWord() {
+  if (!isDrawer) return;
+  addMsg('⏭ Mot passé : ' + currentWord, 'system');
+  db.ref('rooms/' + roomId + '/wordHistory').push({ word: currentWord, status: 'skipped', ts: Date.now() });
+  db.ref('rooms/' + roomId).update({ currentWord: pickWord(), strokes: null });
+}
+
 // ── GUESS ─────────────────────────────────────────────────────────
 function sendGuess() {
   if (isDrawer) return;
@@ -472,6 +546,7 @@ function sendGuess() {
   if (correct) {
     db.ref('rooms/' + roomId + '/wordsGuessed').transaction(n => (n || 0) + 1);
     db.ref('rooms/' + roomId + '/players/' + currentDrawerId + '/score').transaction(n => (n || 0) + 1);
+    db.ref('rooms/' + roomId + '/wordHistory').push({ word: currentWord, status: 'guessed', ts: Date.now() });
     setTimeout(() => {
       db.ref('rooms/' + roomId).update({ currentWord: pickWord(), strokes: null });
     }, 600);
@@ -615,18 +690,57 @@ function buildSizes() {
 // ── SCORES ────────────────────────────────────────────────────────
 function showScores() {
   clearInterval(timerInterval);
-  db.ref('rooms/' + roomId + '/players').once('value').then(snap => {
-    const players = snap.val() || {};
-    const sorted = Object.values(players).sort((a, b) => b.score - a.score);
+  db.ref('rooms/' + roomId).once('value').then(snap => {
+    const room = snap.val() || {};
+    const players = room.players || {};
+    const turnOrder = room.turnOrder || [];
+    const turnHistory = room.turnHistory || {};
+
+    // Compute total words (guessed + skipped) per player turn
+    const totalPerTurn = {};
+    const guessedPerTurn = {};
+    const skippedPerTurn = {};
+    turnOrder.forEach((pid, idx) => {
+      const hist = turnHistory[idx] ? Object.values(turnHistory[idx]) : [];
+      guessedPerTurn[pid] = hist.filter(w => w.status === 'guessed').length;
+      skippedPerTurn[pid] = hist.filter(w => w.status === 'skipped').length;
+      totalPerTurn[pid] = hist.length;
+    });
+
+    const sorted = Object.entries(players).sort((a, b) => b[1].score - a[1].score);
     const table = document.getElementById('scoreboard');
-    table.innerHTML = '<tr><th>#</th><th>Joueur</th><th>Mots devinés 🏅</th></tr>';
-    sorted.forEach((p, i) => {
+    table.innerHTML = '<tr><th>#</th><th>Joueur</th><th>Devinés / Total 🏅</th></tr>';
+    sorted.forEach(([pid, p], i) => {
       const tr = document.createElement('tr');
       if (i === 0) tr.className = 'winner';
       const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1);
-      tr.innerHTML = `<td>${medal}</td><td>${p.name}</td><td>${p.score}</td>`;
+      const guessed = guessedPerTurn[pid] || p.score || 0;
+      const total = totalPerTurn[pid] || guessed;
+      tr.innerHTML = `<td>${medal}</td><td>${p.name}</td><td>${guessed} / ${total}</td>`;
       table.appendChild(tr);
     });
+
+    // Recap per turn
+    const recapDiv = document.getElementById('score-recap');
+    if (recapDiv) {
+      recapDiv.innerHTML = '';
+      turnOrder.forEach((pid, idx) => {
+        const hist = turnHistory[idx] ? Object.values(turnHistory[idx]).sort((a,b) => a.ts - b.ts) : [];
+        const pname = players[pid] ? players[pid].name : '?';
+        if (hist.length === 0) return;
+        const block = document.createElement('div');
+        block.style.cssText = 'margin-top:1rem;';
+        block.innerHTML = `<div style="font-size:13px;font-weight:600;color:#534ab7;margin-bottom:6px;">🖌 Tour de ${pname}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;">
+            ${hist.map(w => {
+              const ok = w.status === 'guessed';
+              return `<span style="padding:3px 10px;border-radius:99px;font-size:12px;font-weight:500;background:${ok?'#e1f5ee':'#fcebeb'};color:${ok?'#0f6e56':'#a32d2d'};border:1px solid ${ok?'#5dcaa5':'#f09595'};">${ok?'✅':'❌'} ${w.word}</span>`;
+            }).join('')}
+          </div>`;
+        recapDiv.appendChild(block);
+      });
+    }
+
     showScreen('scores');
   });
 }
