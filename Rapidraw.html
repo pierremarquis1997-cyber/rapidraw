@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Rapidraw 🎨</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #f5f4f0; color: #2c2c2a; min-height: 100vh; }
+  #app { max-width: 960px; margin: 0 auto; padding: 1rem; }
+  .screen { display: none; }
+  .screen.active { display: block; }
+  .card { background: #fff; border: 1px solid #e0dfd8; border-radius: 12px; padding: 1.5rem; margin-bottom: 1rem; }
+  input[type=text] {
+    width: 100%; padding: 10px 14px; border: 1px solid #d3d1c7; border-radius: 8px;
+    font-size: 15px; outline: none; margin-bottom: 0.75rem; background: #fff; color: #2c2c2a;
+  }
+  input[type=text]:focus { border-color: #7f77dd; box-shadow: 0 0 0 3px #eeedfe; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px; padding: 10px 20px;
+    border-radius: 8px; border: 1px solid #d3d1c7; background: #fff; color: #2c2c2a;
+    font-size: 14px; cursor: pointer; transition: background 0.15s;
+  }
+  .btn:hover { background: #f5f4f0; }
+  .btn:active { transform: scale(0.98); }
+  .btn-primary { background: #534ab7; color: #fff; border-color: #534ab7; }
+  .btn-primary:hover { background: #3c3489; border-color: #3c3489; }
+  .btn-sm { padding: 6px 12px; font-size: 13px; }
+  .btn-full { width: 100%; justify-content: center; }
+  canvas { border: 1px solid #e0dfd8; border-radius: 8px; display: block; cursor: crosshair; touch-action: none; background: #fff; }
+  .room-code { font-size: 36px; font-weight: 600; letter-spacing: 8px; color: #534ab7; text-align: center; padding: 0.75rem 0; }
+  .players-list { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 1rem; }
+  .player-chip {
+    padding: 5px 14px; border-radius: 99px; font-size: 13px;
+    border: 1px solid #e0dfd8; background: #f5f4f0; color: #2c2c2a;
+  }
+  .player-chip.drawing { background: #eeedfe; color: #3c3489; border-color: #afa9ec; font-weight: 600; }
+  .player-chip.me { border-color: #7f77dd; }
+  .timer-bar { height: 8px; border-radius: 4px; background: #e0dfd8; overflow: hidden; margin-bottom: 1rem; }
+  .timer-fill { height: 100%; background: #534ab7; transition: width 0.5s linear; border-radius: 4px; }
+  .timer-fill.urgent { background: #e24b4a; }
+  .word-display { text-align: center; font-size: 26px; font-weight: 600; letter-spacing: 5px; padding: 0.75rem 0; color: #2c2c2a; }
+  .word-count { text-align: center; font-size: 13px; color: #888780; margin-bottom: 0.25rem; }
+  .chat { height: 200px; overflow-y: auto; border: 1px solid #e0dfd8; border-radius: 8px; padding: 10px; margin-bottom: 8px; background: #faf9f7; }
+  .msg { font-size: 13px; padding: 2px 0; line-height: 1.6; }
+  .msg .name { font-weight: 600; }
+  .msg.correct { color: #0f6e56; font-weight: 500; }
+  .msg.system { color: #888780; font-style: italic; }
+  .tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+  .color-btn { width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; transition: transform 0.1s; }
+  .color-btn:hover { transform: scale(1.15); }
+  .color-btn.selected { border-color: #2c2c2a; box-shadow: 0 0 0 2px #fff inset; }
+  .size-btn {
+    width: 32px; height: 32px; border-radius: 8px; border: 1px solid #d3d1c7;
+    background: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+  .size-btn.selected { border-color: #7f77dd; background: #eeedfe; }
+  .scoreboard { width: 100%; border-collapse: collapse; font-size: 15px; }
+  .scoreboard th { text-align: left; padding: 10px 8px; border-bottom: 1px solid #e0dfd8; color: #888780; font-weight: 400; }
+  .scoreboard td { padding: 10px 8px; border-bottom: 1px solid #e0dfd8; }
+  .scoreboard tr.winner td { background: #eeedfe; color: #3c3489; font-weight: 600; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .game-layout { display: flex; gap: 1rem; align-items: flex-start; }
+  .game-canvas-area { flex: 1; min-width: 0; }
+  .game-sidebar { width: 240px; flex-shrink: 0; }
+  .status-msg { font-size: 13px; color: #888780; margin-top: 0.5rem; text-align: center; min-height: 20px; }
+  .title { font-size: 32px; font-weight: 700; text-align: center; padding: 2rem 0 0.5rem; }
+  .subtitle { font-size: 15px; color: #888780; text-align: center; margin-bottom: 1.5rem; }
+  .turn-info { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; font-size: 13px; color: #888780; }
+  .copy-btn { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #534ab7; cursor: pointer; border: none; background: none; padding: 4px 8px; border-radius: 6px; }
+  .copy-btn:hover { background: #eeedfe; }
+  @media (max-width: 640px) {
+    .game-layout { flex-direction: column; }
+    .game-sidebar { width: 100%; }
+    .grid2 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- HOME -->
+  <div id="screen-home" class="screen active">
+    <div class="title">🎨 Rapidraw</div>
+    <div class="subtitle">Dessine le plus de mots en 60 secondes !</div>
+    <div class="card" style="max-width:420px; margin: 0 auto;">
+      <input type="text" id="input-name" placeholder="Ton pseudo" maxlength="16" />
+      <div class="grid2">
+        <button class="btn btn-primary" onclick="createRoom()">➕ Créer une partie</button>
+        <button class="btn" onclick="showJoin()">🚪 Rejoindre</button>
+      </div>
+      <div id="join-area" style="display:none; margin-top:0.75rem;">
+        <input type="text" id="input-room" placeholder="Code de la partie (ex: ABCD)" maxlength="6" style="text-transform:uppercase; margin-top:0.5rem;" />
+        <button class="btn btn-primary btn-full" onclick="joinRoom()">Rejoindre</button>
+      </div>
+      <div class="status-msg" id="status-msg"></div>
+    </div>
+  </div>
+
+  <!-- LOBBY -->
+  <div id="screen-lobby" class="screen">
+    <div class="card" style="max-width:480px; margin: 2rem auto;">
+      <div style="font-size:13px; color:#888780; text-align:center; margin-bottom:4px;">Code de la partie</div>
+      <div class="room-code" id="lobby-code">----</div>
+      <div style="text-align:center; margin-bottom:1rem;">
+        <button class="copy-btn" onclick="copyCode()">📋 Copier le code</button>
+      </div>
+      <div id="lobby-players" class="players-list" style="justify-content:center;"></div>
+      <div style="font-size:13px; color:#888780; text-align:center; margin-bottom:1rem;" id="lobby-info">En attente de joueurs... (2 minimum)</div>
+      <button class="btn btn-primary btn-full" id="btn-start" onclick="startGame()" style="display:none;">
+        ▶ Lancer la partie
+      </button>
+    </div>
+  </div>
+
+  <!-- GAME -->
+  <div id="screen-game" class="screen">
+    <div class="turn-info">
+      <div id="game-players" class="players-list" style="margin:0; flex:1;"></div>
+      <div style="white-space:nowrap; margin-left:12px;">Tour <span id="turn-num">1</span> / <span id="turn-total">?</span></div>
+    </div>
+    <div class="timer-bar"><div class="timer-fill" id="timer-fill" style="width:100%"></div></div>
+    <div class="game-layout">
+      <div class="game-canvas-area">
+        <div id="drawing-panel">
+          <div class="word-count" id="word-count">Mots devinés : 0</div>
+          <div class="word-display" id="word-display">— — — —</div>
+          <div class="tools">
+            <div id="colors" style="display:flex; gap:4px;"></div>
+            <div id="sizes" style="display:flex; gap:4px;"></div>
+            <button class="btn btn-sm" onclick="clearCanvas(true)">🗑 Effacer</button>
+          </div>
+          <canvas id="canvas" width="580" height="340"></canvas>
+        </div>
+        <div id="guess-panel" style="display:none;">
+          <div class="word-count" style="margin-bottom:6px;">Devine ce que dessine <span id="drawer-name-label" style="color:#534ab7;font-weight:600;"></span> !</div>
+          <canvas id="canvas-view" width="580" height="340"></canvas>
+        </div>
+      </div>
+      <div class="game-sidebar">
+        <div class="chat" id="chat"></div>
+        <div style="display:flex; gap:6px;">
+          <input type="text" id="guess-input" placeholder="Ta réponse..." style="flex:1; margin:0;" onkeydown="if(event.key==='Enter') sendGuess()" />
+          <button class="btn btn-sm btn-primary" onclick="sendGuess()">↗</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCORES -->
+  <div id="screen-scores" class="screen">
+    <div class="card" style="max-width:480px; margin: 2rem auto;">
+      <div style="font-size:22px; font-weight:600; margin-bottom:1rem; text-align:center;">🏆 Résultats</div>
+      <table class="scoreboard" id="scoreboard"></table>
+      <div style="margin-top:1rem; display:flex; gap:8px;">
+        <button class="btn btn-primary btn-full" onclick="backToLobby()">🔄 Rejouer</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script>
+// ── CONFIG FIREBASE ──────────────────────────────────────────────
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyAPM0wXWKLWfUbWtLWEp8ljwztyV683yuo",
+  authDomain: "rapidraw-e52e0.firebaseapp.com",
+  databaseURL: "https://rapidraw-e52e0-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "rapidraw-e52e0",
+  storageBucket: "rapidraw-e52e0.firebasestorage.app",
+  messagingSenderId: "743265186137",
+  appId: "1:743265186137:web:ba9d1ce2be907ed9dd1c48"
+};
+
+// ── MOTS ─────────────────────────────────────────────────────────
+const WORDS = [
+  "chat","chien","voiture","maison","soleil","arbre","fleur","oiseau","poisson","vélo",
+  "avion","bateau","train","pizza","gâteau","banane","pomme","livre","guitare","piano",
+  "football","tennis","natation","montagne","plage","château","robot","dragon","sorcier",
+  "fusée","éléphant","girafe","dauphin","papillon","champignon","parapluie","lunettes",
+  "chapeau","couronne","bougie","ballon","drapeau","horloge","téléphone","ordinateur",
+  "télévision","réfrigérateur","escalier","fenêtre","nuage","arc-en-ciel","neige",
+  "volcan","désert","forêt","île","phare","moulin","canard","lapin","renard","loup",
+  "ours","licorne","dinosaure","extraterrestre","pirate","astronaute","cuisinier",
+  "docteur","policier","pompier","magicien","clown","vampire","zombie","sirène",
+  "cactus","igloo","trampoline","hamster","koala","pingouin","flamant","toucan"
+];
+
+// ── ÉTAT ─────────────────────────────────────────────────────────
+firebase.initializeApp(FIREBASE_CONFIG);
+const db = firebase.database();
+
+let myId = Math.random().toString(36).slice(2, 9);
+let myName = "";
+let roomId = "";
+let isHost = false;
+let isDrawer = false;
+let currentWord = "";
+let currentDrawerId = "";
+let turnOrder = [];
+let timerInterval = null;
+let drawColor = "#2c2c2a";
+let drawSize = 3;
+let painting = false;
+let lastX = 0, lastY = 0;
+let activeStrokeKey = null;
+let activeListeners = [];
+
+// ── UTILS ─────────────────────────────────────────────────────────
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen-' + id).classList.add('active');
+}
+function setStatus(msg) { document.getElementById('status-msg').textContent = msg; }
+function randCode() { return Math.random().toString(36).slice(2, 6).toUpperCase(); }
+function pickWord() { return WORDS[Math.floor(Math.random() * WORDS.length)]; }
+function copyCode() {
+  navigator.clipboard.writeText(roomId).then(() => alert('Code copié : ' + roomId));
+}
+function addMsg(text, type) {
+  const chat = document.getElementById('chat');
+  const div = document.createElement('div');
+  div.className = 'msg ' + (type || '');
+  div.textContent = text;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+function clearChatUI() { document.getElementById('chat').innerHTML = ''; }
+function offAll() { activeListeners.forEach(fn => fn()); activeListeners = []; }
+function on(ref, evt, cb) {
+  ref.on(evt, cb);
+  activeListeners.push(() => ref.off(evt, cb));
+}
+
+// ── HOME ──────────────────────────────────────────────────────────
+function showJoin() { document.getElementById('join-area').style.display = 'block'; }
+
+function createRoom() {
+  myName = document.getElementById('input-name').value.trim();
+  if (!myName) { setStatus('Entre ton pseudo !'); return; }
+  roomId = randCode();
+  isHost = true;
+  const ref = db.ref('rooms/' + roomId);
+  ref.set({ status: 'lobby', host: myId, currentTurn: 0 });
+  ref.child('players/' + myId).set({ name: myName, score: 0, joinedAt: Date.now() });
+  document.getElementById('lobby-code').textContent = roomId;
+  listenLobby();
+  showScreen('lobby');
+}
+
+function joinRoom() {
+  myName = document.getElementById('input-name').value.trim();
+  const code = document.getElementById('input-room').value.trim().toUpperCase();
+  if (!myName) { setStatus('Entre ton pseudo !'); return; }
+  if (!code) { setStatus('Entre le code !'); return; }
+  roomId = code;
+  isHost = false;
+  db.ref('rooms/' + roomId).once('value').then(snap => {
+    if (!snap.exists()) { setStatus('Partie introuvable !'); return; }
+    if (snap.val().status === 'playing') { setStatus('Partie déjà en cours !'); return; }
+    db.ref('rooms/' + roomId + '/players/' + myId).set({ name: myName, score: 0, joinedAt: Date.now() });
+    document.getElementById('lobby-code').textContent = roomId;
+    listenLobby();
+    showScreen('lobby');
+  });
+}
+
+// ── LOBBY ─────────────────────────────────────────────────────────
+function listenLobby() {
+  offAll();
+  const ref = db.ref('rooms/' + roomId);
+
+  on(ref.child('players'), 'value', snap => {
+    const players = snap.val() || {};
+    const count = Object.keys(players).length;
+    const list = document.getElementById('lobby-players');
+    list.innerHTML = '';
+    Object.values(players).forEach(p => {
+      const chip = document.createElement('div');
+      chip.className = 'player-chip' + (p.name === myName ? ' me' : '');
+      chip.textContent = p.name;
+      list.appendChild(chip);
+    });
+    document.getElementById('lobby-info').textContent =
+      count < 2 ? `En attente de joueurs... (${count}/2 minimum)` : `${count} joueur(s) prêt(s) ✅`;
+    const btn = document.getElementById('btn-start');
+    btn.style.display = (isHost && count >= 2) ? 'flex' : 'none';
+  });
+
+  on(ref.child('status'), 'value', snap => {
+    if (snap.val() === 'playing') { offAll(); loadAndStartTurn(); }
+    if (snap.val() === 'scores') { offAll(); showScores(); }
+  });
+}
+
+// ── START GAME ────────────────────────────────────────────────────
+function startGame() {
+  db.ref('rooms/' + roomId + '/players').once('value').then(snap => {
+    const players = snap.val() || {};
+    const order = Object.keys(players).sort((a, b) => players[a].joinedAt - players[b].joinedAt);
+    db.ref('rooms/' + roomId).update({
+      status: 'playing',
+      currentTurn: 0,
+      turnOrder: order,
+      wordsGuessed: 0,
+      currentWord: pickWord(),
+      turnStart: Date.now(),
+      strokes: null,
+      guesses: null
+    });
+  });
+}
+
+// ── GAME TURN ─────────────────────────────────────────────────────
+function loadAndStartTurn() {
+  db.ref('rooms/' + roomId).once('value').then(snap => {
+    const room = snap.val();
+    if (!room) return;
+    turnOrder = room.turnOrder || [];
+    const idx = room.currentTurn || 0;
+    currentDrawerId = turnOrder[idx % turnOrder.length];
+    isDrawer = myId === currentDrawerId;
+    currentWord = room.currentWord || '';
+    renderGameUI(room);
+    showScreen('game');
+    startTimer(room.turnStart);
+    listenGameEvents();
+  });
+}
+
+function renderGameUI(room) {
+  const players = room.players || {};
+  const drawerName = players[currentDrawerId] ? players[currentDrawerId].name : '?';
+  document.getElementById('turn-num').textContent = (room.currentTurn || 0) + 1;
+  document.getElementById('turn-total').textContent = turnOrder.length;
+
+  // Player chips
+  const div = document.getElementById('game-players');
+  div.innerHTML = '';
+  Object.entries(players).forEach(([pid, p]) => {
+    const chip = document.createElement('div');
+    chip.className = 'player-chip' + (pid === currentDrawerId ? ' drawing' : '') + (pid === myId ? ' me' : '');
+    chip.textContent = (pid === currentDrawerId ? '🖌 ' : '') + p.name + (p.score > 0 ? ` (${p.score})` : '');
+    div.appendChild(chip);
+  });
+
+  if (isDrawer) {
+    document.getElementById('drawing-panel').style.display = 'block';
+    document.getElementById('guess-panel').style.display = 'none';
+    document.getElementById('guess-input').disabled = true;
+    document.getElementById('word-display').textContent = currentWord.toUpperCase();
+    document.getElementById('word-count').textContent = 'Mots devinés : ' + (room.wordsGuessed || 0);
+    initDrawCanvas();
+    buildColors();
+    buildSizes();
+  } else {
+    document.getElementById('drawing-panel').style.display = 'none';
+    document.getElementById('guess-panel').style.display = 'block';
+    document.getElementById('guess-input').disabled = false;
+    document.getElementById('guess-input').value = '';
+    document.getElementById('drawer-name-label').textContent = drawerName;
+    initViewCanvas();
+  }
+
+  clearChatUI();
+  addMsg(`🎨 ${drawerName} dessine maintenant !`, 'system');
+}
+
+// ── TIMER ─────────────────────────────────────────────────────────
+function startTimer(turnStart) {
+  clearInterval(timerInterval);
+  const fill = document.getElementById('timer-fill');
+  timerInterval = setInterval(() => {
+    const elapsed = (Date.now() - turnStart) / 1000;
+    const remaining = Math.max(0, 60 - elapsed);
+    fill.style.width = ((remaining / 60) * 100) + '%';
+    fill.className = 'timer-fill' + (remaining < 15 ? ' urgent' : '');
+    if (remaining <= 0) {
+      clearInterval(timerInterval);
+      if (isDrawer) advanceTurn();
+    }
+  }, 500);
+}
+
+function advanceTurn() {
+  db.ref('rooms/' + roomId).once('value').then(snap => {
+    const room = snap.val();
+    if (!room) return;
+    const next = (room.currentTurn || 0) + 1;
+    if (next >= (room.turnOrder || []).length) {
+      db.ref('rooms/' + roomId).update({ status: 'scores' });
+    } else {
+      db.ref('rooms/' + roomId).update({
+        currentTurn: next,
+        wordsGuessed: 0,
+        currentWord: pickWord(),
+        turnStart: Date.now(),
+        strokes: null,
+        guesses: null
+      });
+    }
+  });
+}
+
+// ── GAME LISTENERS ────────────────────────────────────────────────
+function listenGameEvents() {
+  offAll();
+
+  // Strokes → viewer
+  on(db.ref('rooms/' + roomId + '/strokes'), 'value', snap => {
+    if (!isDrawer) redrawView(snap.val());
+  });
+
+  // Word change → drawer gets new word, clears canvas
+  on(db.ref('rooms/' + roomId + '/currentWord'), 'value', snap => {
+    if (isDrawer && snap.val() && snap.val() !== currentWord) {
+      currentWord = snap.val();
+      document.getElementById('word-display').textContent = currentWord.toUpperCase();
+      clearCanvas(false);
+    }
+  });
+
+  // Words guessed counter
+  on(db.ref('rooms/' + roomId + '/wordsGuessed'), 'value', snap => {
+    if (isDrawer) document.getElementById('word-count').textContent = 'Mots devinés : ' + (snap.val() || 0);
+  });
+
+  // Chat / guesses
+  on(db.ref('rooms/' + roomId + '/guesses').limitToLast(30), 'child_added', snap => {
+    const g = snap.val();
+    if (!g) return;
+    if (g.correct) addMsg('✅ ' + g.name + ' a trouvé !', 'correct');
+    else addMsg(g.name + ' : ' + g.text, '');
+  });
+
+  // Turn change
+  on(db.ref('rooms/' + roomId + '/currentTurn'), 'value', snap => {
+    db.ref('rooms/' + roomId).once('value').then(s => {
+      const room = s.val();
+      if (!room || room.status !== 'playing') return;
+      const newDrawer = room.turnOrder[room.currentTurn % room.turnOrder.length];
+      if (newDrawer !== currentDrawerId) {
+        clearInterval(timerInterval);
+        currentDrawerId = newDrawer;
+        isDrawer = myId === currentDrawerId;
+        currentWord = room.currentWord;
+        renderGameUI(room);
+        startTimer(room.turnStart);
+        listenGameEvents();
+      }
+    });
+  });
+
+  // Status change
+  on(db.ref('rooms/' + roomId + '/status'), 'value', snap => {
+    if (snap.val() === 'scores') { clearInterval(timerInterval); offAll(); showScores(); }
+  });
+}
+
+// ── GUESS ─────────────────────────────────────────────────────────
+function sendGuess() {
+  if (isDrawer) return;
+  const inp = document.getElementById('guess-input');
+  const text = inp.value.trim();
+  if (!text) return;
+  inp.value = '';
+  const correct = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') ===
+                  currentWord.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  db.ref('rooms/' + roomId + '/guesses').push({ name: myName, text, correct, ts: Date.now() });
+  if (correct) {
+    db.ref('rooms/' + roomId + '/wordsGuessed').transaction(n => (n || 0) + 1);
+    db.ref('rooms/' + roomId + '/players/' + currentDrawerId + '/score').transaction(n => (n || 0) + 1);
+    setTimeout(() => {
+      db.ref('rooms/' + roomId).update({ currentWord: pickWord(), strokes: null });
+    }, 600);
+  }
+}
+
+// ── CANVAS (DRAWER) ───────────────────────────────────────────────
+function initDrawCanvas() {
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  canvas.onmousedown = canvas.ontouchstart = startStroke;
+  canvas.onmousemove = canvas.ontouchmove = moveStroke;
+  canvas.onmouseup = canvas.ontouchend = canvas.onmouseleave = endStroke;
+}
+
+function getPos(canvas, e) {
+  const rect = canvas.getBoundingClientRect();
+  const sx = canvas.width / rect.width;
+  const sy = canvas.height / rect.height;
+  const src = e.touches ? e.touches[0] : e;
+  return { x: (src.clientX - rect.left) * sx, y: (src.clientY - rect.top) * sy };
+}
+
+function startStroke(e) {
+  e.preventDefault();
+  painting = true;
+  const { x, y } = getPos(this, e);
+  lastX = x; lastY = y;
+  activeStrokeKey = db.ref('rooms/' + roomId + '/strokes').push().key;
+  db.ref('rooms/' + roomId + '/strokes/' + activeStrokeKey).set({
+    color: drawColor, size: drawSize, points: [x, y]
+  });
+}
+
+function moveStroke(e) {
+  e.preventDefault();
+  if (!painting) return;
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const { x, y } = getPos(canvas, e);
+  ctx.beginPath();
+  ctx.moveTo(lastX, lastY);
+  ctx.lineTo(x, y);
+  ctx.strokeStyle = drawColor;
+  ctx.lineWidth = drawSize;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+  if (activeStrokeKey) {
+    db.ref('rooms/' + roomId + '/strokes/' + activeStrokeKey + '/points').transaction(pts => {
+      return (pts || []).concat([x, y]);
+    });
+  }
+  lastX = x; lastY = y;
+}
+
+function endStroke() { painting = false; activeStrokeKey = null; }
+
+function clearCanvas(sync) {
+  const canvas = document.getElementById('canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (sync) db.ref('rooms/' + roomId + '/strokes').remove();
+}
+
+// ── CANVAS (VIEWER) ───────────────────────────────────────────────
+function initViewCanvas() {
+  const canvas = document.getElementById('canvas-view');
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+function redrawView(strokes) {
+  const canvas = document.getElementById('canvas-view');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (!strokes) return;
+  Object.values(strokes).forEach(stroke => {
+    const pts = stroke.points || [];
+    if (pts.length < 2) return;
+    ctx.beginPath();
+    ctx.moveTo(pts[0], pts[1]);
+    ctx.strokeStyle = stroke.color;
+    ctx.lineWidth = stroke.size;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]);
+    ctx.stroke();
+  });
+}
+
+// ── COLORS & SIZES ────────────────────────────────────────────────
+function buildColors() {
+  const palette = ['#2c2c2a','#e24b4a','#534ab7','#1d9e75','#ef9f27','#d4537e','#378add','#000000','#ffffff','#888780'];
+  const div = document.getElementById('colors');
+  div.innerHTML = '';
+  palette.forEach(c => {
+    const btn = document.createElement('button');
+    btn.className = 'color-btn' + (c === drawColor ? ' selected' : '');
+    btn.style.background = c;
+    if (c === '#ffffff') btn.style.outline = '1px solid #ccc';
+    btn.title = c;
+    btn.onclick = () => {
+      drawColor = c;
+      document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+    };
+    div.appendChild(btn);
+  });
+}
+
+function buildSizes() {
+  const sizes = [2, 5, 12, 24];
+  const labels = ['S','M','L','XL'];
+  const div = document.getElementById('sizes');
+  div.innerHTML = '';
+  sizes.forEach((s, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'size-btn' + (s === drawSize ? ' selected' : '');
+    const dot = document.createElement('div');
+    dot.style.cssText = `width:${Math.min(s,20)}px;height:${Math.min(s,20)}px;border-radius:50%;background:#2c2c2a;`;
+    btn.appendChild(dot);
+    btn.title = labels[i];
+    btn.onclick = () => {
+      drawSize = s;
+      document.querySelectorAll('.size-btn').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+    };
+    div.appendChild(btn);
+  });
+}
+
+// ── SCORES ────────────────────────────────────────────────────────
+function showScores() {
+  clearInterval(timerInterval);
+  db.ref('rooms/' + roomId + '/players').once('value').then(snap => {
+    const players = snap.val() || {};
+    const sorted = Object.values(players).sort((a, b) => b.score - a.score);
+    const table = document.getElementById('scoreboard');
+    table.innerHTML = '<tr><th>#</th><th>Joueur</th><th>Mots devinés 🏅</th></tr>';
+    sorted.forEach((p, i) => {
+      const tr = document.createElement('tr');
+      if (i === 0) tr.className = 'winner';
+      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1);
+      tr.innerHTML = `<td>${medal}</td><td>${p.name}</td><td>${p.score}</td>`;
+      table.appendChild(tr);
+    });
+    showScreen('scores');
+  });
+}
+
+function backToLobby() {
+  db.ref('rooms/' + roomId + '/players').once('value').then(snap => {
+    const updates = {};
+    Object.keys(snap.val() || {}).forEach(pid => { updates[pid + '/score'] = 0; });
+    db.ref('rooms/' + roomId + '/players').update(updates).then(() => {
+      db.ref('rooms/' + roomId).update({ status: 'lobby', currentTurn: 0, strokes: null, guesses: null });
+      listenLobby();
+      showScreen('lobby');
+    });
+  });
+}
+</script>
+</body>
+</html>
