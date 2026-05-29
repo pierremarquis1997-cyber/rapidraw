@@ -432,10 +432,11 @@ function listenGameEvents() {
     if (!isDrawer) redrawView(snap.val());
   });
 
-  // Word change → drawer gets new word, clears canvas
+  // Word change → everyone updates currentWord; drawer sees new word and clears canvas
   on(db.ref('rooms/' + roomId + '/currentWord'), 'value', snap => {
-    if (isDrawer && snap.val() && snap.val() !== currentWord) {
-      currentWord = snap.val();
+    if (!snap.val()) return;
+    currentWord = snap.val();
+    if (isDrawer) {
       document.getElementById('word-display').textContent = currentWord.toUpperCase();
       clearCanvas(false);
     }
@@ -544,12 +545,20 @@ function sendGuess() {
                   currentWord.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   db.ref('rooms/' + roomId + '/guesses').push({ name: myName, text, correct, ts: Date.now() });
   if (correct) {
-    db.ref('rooms/' + roomId + '/wordsGuessed').transaction(n => (n || 0) + 1);
-    db.ref('rooms/' + roomId + '/players/' + currentDrawerId + '/score').transaction(n => (n || 0) + 1);
-    db.ref('rooms/' + roomId + '/wordHistory').push({ word: currentWord, status: 'guessed', ts: Date.now() });
-    setTimeout(() => {
-      db.ref('rooms/' + roomId).update({ currentWord: pickWord(), strokes: null });
-    }, 600);
+    const guessedWord = currentWord;
+    const nextWord = pickWord();
+    db.ref('rooms/' + roomId + '/currentWord').transaction(w => {
+      if (w !== guessedWord) return;
+      return nextWord;
+    }, (err, committed) => {
+      if (committed) {
+        db.ref('rooms/' + roomId + '/wordsGuessed').transaction(n => (n || 0) + 1);
+        db.ref('rooms/' + roomId + '/players/' + currentDrawerId + '/score').transaction(n => (n || 0) + 1);
+        db.ref('rooms/' + roomId + '/players/' + myId + '/guessScore').transaction(n => (n || 0) + 1);
+        db.ref('rooms/' + roomId + '/wordHistory').push({ word: guessedWord, status: 'guessed', ts: Date.now() });
+        db.ref('rooms/' + roomId + '/strokes').remove();
+      }
+    });
   }
 }
 
@@ -704,19 +713,30 @@ function showScores() {
       const hist = turnHistory[idx] ? Object.values(turnHistory[idx]) : [];
       guessedPerTurn[pid] = hist.filter(w => w.status === 'guessed').length;
       skippedPerTurn[pid] = hist.filter(w => w.status === 'skipped').length;
-      totalPerTurn[pid] = hist.length;
+      totalPerTurn[pid] = guessedPerTurn[pid] + skippedPerTurn[pid];
     });
 
-    const sorted = Object.entries(players).sort((a, b) => b[1].score - a[1].score);
+    const madeGuessed = {}; // mots fait deviner (dessinateur)
+    turnOrder.forEach((pid, idx) => {
+      const hist = turnHistory[idx] ? Object.values(turnHistory[idx]) : [];
+      madeGuessed[pid] = hist.filter(w => w.status === 'guessed').length;
+    });
+
+    const sorted = Object.entries(players).sort((a, b) => {
+      const totalA = (a[1].score || 0) + (a[1].guessScore || 0);
+      const totalB = (b[1].score || 0) + (b[1].guessScore || 0);
+      return totalB - totalA;
+    });
     const table = document.getElementById('scoreboard');
-    table.innerHTML = '<tr><th>#</th><th>Joueur</th><th>Devinés / Total 🏅</th></tr>';
+    table.innerHTML = '<tr><th>#</th><th>Joueur</th><th>Total 🏆</th><th>Devinés ✍️</th><th>Fait deviner 🎨</th></tr>';
     sorted.forEach(([pid, p], i) => {
       const tr = document.createElement('tr');
+      const drawerScore = madeGuessed[pid] || 0;
+      const guesserScore = p.guessScore || 0;
+      const total = drawerScore + guesserScore;
       if (i === 0) tr.className = 'winner';
       const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1);
-      const guessed = guessedPerTurn[pid] || p.score || 0;
-      const total = totalPerTurn[pid] || guessed;
-      tr.innerHTML = `<td>${medal}</td><td>${p.name}</td><td>${guessed} / ${total}</td>`;
+      tr.innerHTML = `<td>${medal}</td><td>${p.name}</td><td>${total}</td><td>${guesserScore}</td><td>${drawerScore}</td>`;
       table.appendChild(tr);
     });
 
@@ -748,7 +768,7 @@ function showScores() {
 function backToLobby() {
   db.ref('rooms/' + roomId + '/players').once('value').then(snap => {
     const updates = {};
-    Object.keys(snap.val() || {}).forEach(pid => { updates[pid + '/score'] = 0; });
+    Object.keys(snap.val() || {}).forEach(pid => { updates[pid + '/score'] = 0; updates[pid + '/guessScore'] = 0; });
     db.ref('rooms/' + roomId + '/players').update(updates).then(() => {
       db.ref('rooms/' + roomId).update({ status: 'lobby', currentTurn: 0, strokes: null, guesses: null });
       listenLobby();
