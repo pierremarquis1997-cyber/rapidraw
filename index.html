@@ -135,6 +135,7 @@
         </div>
         <div id="guess-panel" style="display:none;">
           <div class="word-count" style="margin-bottom:6px;">Devine ce que dessine <span id="drawer-name-label" style="color:#534ab7;font-weight:600;"></span> !</div>
+          <div id="word-hint" style="text-align:center; font-size:22px; letter-spacing:8px; font-weight:600; color:#534ab7; margin-bottom:8px; font-family:monospace;"></div>
           <canvas id="canvas-view" width="580" height="340"></canvas>
         </div>
         <div id="word-history" style="margin-top:10px; display:flex; flex-wrap:wrap; gap:6px; min-height:28px;"></div>
@@ -367,6 +368,8 @@ function renderGameUI(room) {
     document.getElementById('guess-input').disabled = false;
     document.getElementById('guess-input').value = '';
     document.getElementById('drawer-name-label').textContent = drawerName;
+    const hint = document.getElementById('word-hint');
+    if (hint) hint.textContent = currentWord.split('').map(c => c === ' ' ? '  ' : c === '-' ? '-' : '_').join(' ');
     initViewCanvas();
   }
 
@@ -414,7 +417,8 @@ function advanceTurn() {
           turnStart: Date.now(),
           strokes: null,
           guesses: null,
-          wordHistory: null
+          wordHistory: null,
+          lastGuessed: null
         };
         if (history) updates['turnHistory/' + (next - 1)] = history;
         db.ref('rooms/' + roomId).update(updates);
@@ -432,13 +436,16 @@ function listenGameEvents() {
     if (!isDrawer) redrawView(snap.val());
   });
 
-  // Word change → everyone updates currentWord; drawer sees new word and clears canvas
+  // Word change → everyone updates currentWord; drawer sees new word, guessers see underscores
   on(db.ref('rooms/' + roomId + '/currentWord'), 'value', snap => {
     if (!snap.val()) return;
     currentWord = snap.val();
     if (isDrawer) {
       document.getElementById('word-display').textContent = currentWord.toUpperCase();
       clearCanvas(false);
+    } else {
+      const hint = document.getElementById('word-hint');
+      if (hint) hint.textContent = currentWord.split('').map(c => c === ' ' ? '  ' : c === '-' ? '-' : '_').join(' ');
     }
   });
 
@@ -452,9 +459,22 @@ function listenGameEvents() {
     updateLiveScores(snap.val() || {});
   });
 
-  // Word history
+  // Word history display
   on(db.ref('rooms/' + roomId + '/wordHistory'), 'value', snap => {
     updateWordHistory(snap.val());
+  });
+
+  // Drawer writes wordHistory when someone guesses correctly
+  on(db.ref('rooms/' + roomId + '/lastGuessed'), 'value', snap => {
+    const g = snap.val();
+    if (!g || !isDrawer) return;
+    db.ref('rooms/' + roomId + '/wordHistory').once('value').then(histSnap => {
+      const existing = histSnap.val() ? Object.values(histSnap.val()) : [];
+      const alreadyLogged = existing.some(w => w.word === g.word && Math.abs(w.ts - g.ts) < 2000);
+      if (!alreadyLogged) {
+        db.ref('rooms/' + roomId + '/wordHistory').push({ word: g.word, status: 'guessed', ts: g.ts });
+      }
+    });
   });
 
   // Chat / guesses
@@ -535,31 +555,40 @@ function skipWord() {
 }
 
 // ── GUESS ─────────────────────────────────────────────────────────
+function normalize(str) {
+  return str.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+}
+
 function sendGuess() {
   if (isDrawer) return;
   const inp = document.getElementById('guess-input');
   const text = inp.value.trim();
   if (!text) return;
   inp.value = '';
-  const correct = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') ===
-                  currentWord.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  db.ref('rooms/' + roomId + '/guesses').push({ name: myName, text, correct, ts: Date.now() });
-  if (correct) {
-    const guessedWord = currentWord;
-    const nextWord = pickWord();
-    db.ref('rooms/' + roomId + '/currentWord').transaction(w => {
-      if (w !== guessedWord) return;
-      return nextWord;
-    }, (err, committed) => {
-      if (committed) {
-        db.ref('rooms/' + roomId + '/wordsGuessed').transaction(n => (n || 0) + 1);
-        db.ref('rooms/' + roomId + '/players/' + currentDrawerId + '/score').transaction(n => (n || 0) + 1);
-        db.ref('rooms/' + roomId + '/players/' + myId + '/guessScore').transaction(n => (n || 0) + 1);
-        db.ref('rooms/' + roomId + '/wordHistory').push({ word: guessedWord, status: 'guessed', ts: Date.now() });
-        db.ref('rooms/' + roomId + '/strokes').remove();
-      }
-    });
-  }
+
+  // Read currentWord live from Firebase to avoid stale local value
+  db.ref('rooms/' + roomId + '/currentWord').once('value').then(snap => {
+    const liveWord = snap.val() || currentWord;
+    currentWord = liveWord;
+    const correct = normalize(text) === normalize(liveWord);
+    db.ref('rooms/' + roomId + '/guesses').push({ name: myName, text, correct, ts: Date.now() });
+    if (correct) {
+      const guessedWord = currentWord;
+      const nextWord = pickWord();
+      db.ref('rooms/' + roomId + '/currentWord').transaction(w => {
+        if (w !== guessedWord) return;
+        return nextWord;
+      }, (err, committed) => {
+        if (committed) {
+          db.ref('rooms/' + roomId + '/wordsGuessed').transaction(n => (n || 0) + 1);
+          db.ref('rooms/' + roomId + '/players/' + currentDrawerId + '/score').transaction(n => (n || 0) + 1);
+          db.ref('rooms/' + roomId + '/players/' + myId + '/guessScore').transaction(n => (n || 0) + 1);
+          db.ref('rooms/' + roomId + '/lastGuessed').set({ word: guessedWord, ts: Date.now() });
+          db.ref('rooms/' + roomId + '/strokes').remove();
+        }
+      });
+    }
+  });
 }
 
 // ── CANVAS (DRAWER) ───────────────────────────────────────────────
