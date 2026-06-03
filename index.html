@@ -559,7 +559,10 @@ function listenGameEvents() {
     const e = snap.val();
     if (!e || e.ts === lastFlashTs) return;
     lastFlashTs = e.ts;
+    // Drawer and guesser trigger flash locally — skip Firebase echo to avoid double flash
+    if (isDrawer) return;
     if (e.type === 'guessed') {
+      if (e.guesser === myName) return; // guesser triggers locally below
       showFlash(e.word.toUpperCase(), 'trouvé par ' + e.guesser + ' !', true);
     } else {
       showFlash(e.word.toUpperCase(), 'passé ⏭', false);
@@ -659,6 +662,7 @@ function skipWord() {
   const skippedWord = currentWord;
   addMsg('⏭ Mot passé : ' + skippedWord, 'system');
   db.ref('rooms/' + roomId + '/wordHistory').push({ word: skippedWord, status: 'skipped', ts: Date.now() });
+  showFlash(skippedWord.toUpperCase(), 'passé ⏭', false);
   db.ref('rooms/' + roomId + '/flashEvent').set({ word: skippedWord, type: 'skipped', ts: Date.now() });
   db.ref('rooms/' + roomId + '/usedWords').once('value').then(snap => {
     const usedList = snap.val() || [];
@@ -690,7 +694,7 @@ function sendGuess() {
     const correct = normalize(text) === normalize(liveWord);
     db.ref('rooms/' + roomId + '/guesses').push({ name: myName, text, correct, ts: Date.now() });
     if (correct) {
-      const guessedWord = currentWord;
+      const guessedWord = liveWord;
       db.ref('rooms/' + roomId + '/usedWords').once('value').then(usedSnap => {
         const usedList = usedSnap.val() || [];
         const nextWord = pickWord(usedList);
@@ -704,8 +708,10 @@ function sendGuess() {
             db.ref('rooms/' + roomId + '/players/' + myId + '/guessScore').transaction(n => (n || 0) + 1);
             db.ref('rooms/' + roomId + '/usedWords').transaction(list => (list || []).concat([nextWord]));
             db.ref('rooms/' + roomId + '/lastGuessed').set({ word: guessedWord, ts: Date.now() });
-            db.ref('rooms/' + roomId + '/flashEvent').set({ word: guessedWord, guesser: myName, type: 'guessed', ts: Date.now() });
+            const flashTs = Date.now();
+            db.ref('rooms/' + roomId + '/flashEvent').set({ word: guessedWord, guesser: myName, type: 'guessed', ts: flashTs });
             db.ref('rooms/' + roomId + '/strokes').remove();
+            showFlash(guessedWord.toUpperCase(), 'trouvé par ' + myName + ' !', true);
           }
         });
       });
