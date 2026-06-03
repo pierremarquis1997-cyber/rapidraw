@@ -115,6 +115,12 @@
 
   <!-- GAME -->
   <div id="screen-game" class="screen">
+    <div id="flash-overlay" style="position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;opacity:0;z-index:999;transition:opacity 0.15s ease;">
+      <div id="flash-word" style="font-size:52px;font-weight:500;letter-spacing:2px;transform:scale(0.5);transition:transform 0.25s cubic-bezier(0.34,1.56,0.64,1);"></div>
+      <div id="flash-sub" style="font-size:18px;margin-top:8px;opacity:0.9;"></div>
+    </div>
+    <div id="particles-container" style="position:fixed;inset:0;pointer-events:none;z-index:998;overflow:hidden;"></div>
+
     <div class="turn-info">
       <div id="game-players" class="players-list" style="margin:0; flex:1;"></div>
       <div style="white-space:nowrap; margin-left:12px;">Tour <span id="turn-num">1</span> / <span id="turn-total">?</span></div>
@@ -128,6 +134,8 @@
           <div class="tools">
             <div id="colors" style="display:flex; gap:4px;"></div>
             <div id="sizes" style="display:flex; gap:4px;"></div>
+            <button class="btn btn-sm" id="btn-pencil" onclick="setTool('pencil')" style="background:#eeedfe;border-color:#7f77dd;">✏️</button>
+            <button class="btn btn-sm" id="btn-bucket" onclick="setTool('bucket')">🪣</button>
             <button class="btn btn-sm" onclick="clearCanvas(true)">🗑 Effacer</button>
             <button class="btn btn-sm" style="background:#fff3cd; border-color:#f0ad4e; color:#7a5000;" onclick="skipWord()">⏭ Passer</button>
           </div>
@@ -190,7 +198,30 @@ const WORDS = [
   "volcan","désert","forêt","île","phare","moulin","canard","lapin","renard","loup",
   "ours","licorne","dinosaure","extraterrestre","pirate","astronaute","cuisinier",
   "docteur","policier","pompier","magicien","clown","vampire","zombie","sirène",
-  "cactus","igloo","trampoline","hamster","koala","pingouin","flamant","toucan"
+  "cactus","igloo","trampoline","hamster","koala","pingouin","flamant","toucan",
+  "accordéon","ampoule","ancre","ananas","araignée","arc","armoire","assiette",
+  "aspirateur","autobus","baguette","baleine","banc","barbe","bibliothèque","botte",
+  "bouteille","bracelet","brosse","brouette","bulle","bureau","bus","cabane",
+  "café","camion","canoe","canapé","carotte","casque","cerise","chaise","chaussure",
+  "cheminée","ciseaux","citron","clé","cloche","coccinelle","coeur","colombe",
+  "compas","coquillage","corde","couteau","crabe","crayon","crocodile","cube",
+  "dent","échelle","écharpe","épée","étoile","éventail","fer à repasser","fontaine",
+  "fourmi","fraise","fromage","fusil","gomme","grenouille","grotte","guitare",
+  "hélicoptère","hibou","hippopotame","hirondelle","horloge","hôtel","île déserte",
+  "jambe","jardin","jongleur","kangourou","kayak","lampe","lanterne","lapin",
+  "lézard","lion","lit","locomotive","loup","lune","machine","manteau","marteau",
+  "masque","méduse","miel","missile","moto","mouche","mouton","nid","noix",
+  "nuage","oignon","olive","ombrelle","orange","oreille","os","otarie","outils",
+  "panda","panier","parasol","parquet","patin","peigne","pelle","pieuvre",
+  "pigeon","pince","pistolet","plume","poireau","pont","portail","poubelle",
+  "poulet","prise","purée","pyramide","raisin","râteau","requin","réveil",
+  "rideau","rivière","rose","roue","ruche","sac","sapin","sardine","saucisse",
+  "savon","seau","serpent","skis","slip","soldat","souris","statue","stylo",
+  "tableau","tapis","tarte","théière","tigre","tomate","tonneau","torche",
+  "tortue","toupie","trombone","trompette","tronc","tulipe","tunnel","usine",
+  "vache","valise","vase","ventilateur","vers","veste","violon","vis","volant",
+  "wagon","zèbre","bonhomme de neige","montgolfière","sous-marin","feu de camp",
+  "château de sable","coucher de soleil","porte-monnaie","sablier","thermos"
 ];
 
 // ── ÉTAT ─────────────────────────────────────────────────────────
@@ -209,6 +240,7 @@ let timerInterval = null;
 let drawColor = "#2c2c2a";
 let drawSize = 3;
 let painting = false;
+let activeTool = 'pencil';
 let lastX = 0, lastY = 0;
 let activeStrokeKey = null;
 let activeListeners = [];
@@ -220,7 +252,12 @@ function showScreen(id) {
 }
 function setStatus(msg) { document.getElementById('status-msg').textContent = msg; }
 function randCode() { return Math.random().toString(36).slice(2, 6).toUpperCase(); }
-function pickWord() { return WORDS[Math.floor(Math.random() * WORDS.length)]; }
+function pickWord(usedList) {
+  const used = usedList || [];
+  const available = WORDS.filter(w => !used.includes(w));
+  const pool = available.length > 0 ? available : WORDS;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
 function copyCode() {
   navigator.clipboard.writeText(roomId).then(() => alert('Code copié : ' + roomId));
 }
@@ -305,16 +342,20 @@ function startGame() {
   db.ref('rooms/' + roomId + '/players').once('value').then(snap => {
     const players = snap.val() || {};
     const order = Object.keys(players).sort((a, b) => players[a].joinedAt - players[b].joinedAt);
+    const firstWord = pickWord([]);
     db.ref('rooms/' + roomId).update({
       status: 'playing',
       currentTurn: 0,
       turnOrder: order,
       wordsGuessed: 0,
-      currentWord: pickWord(),
+      currentWord: firstWord,
+      usedWords: [firstWord],
       turnStart: Date.now(),
       strokes: null,
       guesses: null,
       wordHistory: null,
+      lastGuessed: null,
+      flashEvent: null,
       turnHistory: null
     });
   });
@@ -400,31 +441,79 @@ function advanceTurn() {
     const room = snap.val();
     if (!room) return;
     const next = (room.currentTurn || 0) + 1;
+    const history = room.wordHistory || null;
     if (next >= (room.turnOrder || []).length) {
-      db.ref('rooms/' + roomId + '/wordHistory').once('value').then(histSnap => {
-        const history = histSnap.val() || null;
-        const updates = { status: 'scores', wordHistory: null };
-        if (history) updates['turnHistory/' + (next - 1)] = history;
-        db.ref('rooms/' + roomId).update(updates);
-      });
+      const updates = { status: 'scores', wordHistory: null };
+      if (history) updates['turnHistory/' + (next - 1)] = history;
+      db.ref('rooms/' + roomId).update(updates);
     } else {
-      db.ref('rooms/' + roomId + '/wordHistory').once('value').then(histSnap => {
-        const history = histSnap.val() || null;
-        const updates = {
-          currentTurn: next,
-          wordsGuessed: 0,
-          currentWord: pickWord(),
-          turnStart: Date.now(),
-          strokes: null,
-          guesses: null,
-          wordHistory: null,
-          lastGuessed: null
-        };
-        if (history) updates['turnHistory/' + (next - 1)] = history;
-        db.ref('rooms/' + roomId).update(updates);
-      });
+      const usedList = room.usedWords || [];
+      const nextWord = pickWord(usedList);
+      const updates = {
+        currentTurn: next,
+        wordsGuessed: 0,
+        currentWord: nextWord,
+        usedWords: usedList.concat([nextWord]),
+        turnStart: Date.now(),
+        strokes: null,
+        guesses: null,
+        wordHistory: null,
+        lastGuessed: null
+      };
+      if (history) updates['turnHistory/' + (next - 1)] = history;
+      db.ref('rooms/' + roomId).update(updates);
     }
   });
+}
+
+// ── FLASH ANIMATION ───────────────────────────────────────────────
+const PARTICLE_COLORS = ['#534ab7','#1d9e75','#ef9f27','#e24b4a','#d4537e','#378add'];
+
+function makeParticles(count) {
+  const container = document.getElementById('particles-container');
+  if (!container) return;
+  for (let i = 0; i < count; i++) {
+    const p = document.createElement('div');
+    p.style.cssText = `position:absolute;width:8px;height:8px;border-radius:2px;background:${PARTICLE_COLORS[Math.floor(Math.random()*PARTICLE_COLORS.length)]};left:${20+Math.random()*60}%;top:-10px;`;
+    container.appendChild(p);
+    const tx = (Math.random()-0.5)*300, ty = 100+Math.random()*400;
+    p.animate([
+      {transform:'translate(0,0) rotate(0deg)',opacity:1},
+      {transform:`translate(${tx}px,${ty}px) rotate(${Math.random()*720}deg)`,opacity:0}
+    ],{duration:900+Math.random()*400,easing:'ease-out',fill:'forwards'}).onfinish = () => p.remove();
+  }
+}
+
+function showFlash(wordText, subText, guessed) {
+  const overlay = document.getElementById('flash-overlay');
+  const wordEl = document.getElementById('flash-word');
+  const subEl = document.getElementById('flash-sub');
+  if (!overlay || !wordEl || !subEl) return;
+
+  if (guessed) {
+    overlay.style.background = 'rgba(29,158,117,0.2)';
+    wordEl.style.color = '#0f6e56';
+    subEl.style.color = '#0f6e56';
+    makeParticles(30);
+  } else {
+    overlay.style.background = 'rgba(226,75,74,0.18)';
+    wordEl.style.color = '#a32d2d';
+    subEl.style.color = '#a32d2d';
+  }
+
+  wordEl.textContent = wordText;
+  subEl.textContent = subText;
+  overlay.style.opacity = '1';
+  wordEl.style.transform = 'scale(0.5)';
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    wordEl.style.transform = 'scale(1)';
+  }));
+
+  setTimeout(() => {
+    overlay.style.transition = 'opacity 0.4s ease';
+    overlay.style.opacity = '0';
+    setTimeout(() => { overlay.style.transition = 'opacity 0.15s ease'; }, 450);
+  }, 1200);
 }
 
 // ── GAME LISTENERS ────────────────────────────────────────────────
@@ -462,6 +551,19 @@ function listenGameEvents() {
   // Word history display
   on(db.ref('rooms/' + roomId + '/wordHistory'), 'value', snap => {
     updateWordHistory(snap.val());
+  });
+
+  // Flash animation for all players
+  let lastFlashTs = 0;
+  on(db.ref('rooms/' + roomId + '/flashEvent'), 'value', snap => {
+    const e = snap.val();
+    if (!e || e.ts === lastFlashTs) return;
+    lastFlashTs = e.ts;
+    if (e.type === 'guessed') {
+      showFlash(e.word.toUpperCase(), 'trouvé par ' + e.guesser + ' !', true);
+    } else {
+      showFlash(e.word.toUpperCase(), 'passé ⏭', false);
+    }
   });
 
   // Drawer writes wordHistory when someone guesses correctly
@@ -513,19 +615,24 @@ function listenGameEvents() {
 function updateLiveScores(players) {
   const div = document.getElementById('live-scores');
   if (!div) return;
-  const sorted = Object.entries(players).sort((a, b) => b[1].score - a[1].score);
+  const sorted = Object.entries(players).sort((a, b) => {
+    const ta = (b[1].score || 0) + (b[1].guessScore || 0);
+    const tb = (a[1].score || 0) + (a[1].guessScore || 0);
+    return ta - tb;
+  });
   const medals = ['🥇','🥈','🥉'];
   div.innerHTML = '<div style="font-size:12px;color:#888780;font-weight:500;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">Scores</div>' +
     sorted.map(([pid, p], i) => {
       const isMe = pid === myId;
       const isDrawing = pid === currentDrawerId;
       const medal = medals[i] || (i + 1);
+      const total = (p.score || 0) + (p.guessScore || 0);
       return `<div style="display:flex;align-items:center;justify-content:space-between;padding:3px 0;${i < sorted.length-1 ? 'border-bottom:1px solid #f0efe8;' : ''}">
         <div style="display:flex;align-items:center;gap:6px;font-size:13px;${isMe ? 'font-weight:600;' : ''}">
           <span>${medal}</span>
           <span style="${isDrawing ? 'color:#534ab7;' : ''}">${isDrawing ? '🖌 ' : ''}${p.name}</span>
         </div>
-        <span style="font-size:13px;font-weight:600;color:${p.score > 0 ? '#0f6e56' : '#888780'};">${p.score}</span>
+        <span style="font-size:13px;font-weight:600;color:${total > 0 ? '#0f6e56' : '#888780'};">${total}</span>
       </div>`;
     }).join('');
 }
@@ -549,9 +656,19 @@ function updateWordHistory(words) {
 // ── SKIP WORD ─────────────────────────────────────────────────────
 function skipWord() {
   if (!isDrawer) return;
-  addMsg('⏭ Mot passé : ' + currentWord, 'system');
-  db.ref('rooms/' + roomId + '/wordHistory').push({ word: currentWord, status: 'skipped', ts: Date.now() });
-  db.ref('rooms/' + roomId).update({ currentWord: pickWord(), strokes: null });
+  const skippedWord = currentWord;
+  addMsg('⏭ Mot passé : ' + skippedWord, 'system');
+  db.ref('rooms/' + roomId + '/wordHistory').push({ word: skippedWord, status: 'skipped', ts: Date.now() });
+  db.ref('rooms/' + roomId + '/flashEvent').set({ word: skippedWord, type: 'skipped', ts: Date.now() });
+  db.ref('rooms/' + roomId + '/usedWords').once('value').then(snap => {
+    const usedList = snap.val() || [];
+    const nextWord = pickWord(usedList);
+    db.ref('rooms/' + roomId).update({
+      currentWord: nextWord,
+      usedWords: usedList.concat([nextWord]),
+      strokes: null
+    });
+  });
 }
 
 // ── GUESS ─────────────────────────────────────────────────────────
@@ -574,21 +691,79 @@ function sendGuess() {
     db.ref('rooms/' + roomId + '/guesses').push({ name: myName, text, correct, ts: Date.now() });
     if (correct) {
       const guessedWord = currentWord;
-      const nextWord = pickWord();
-      db.ref('rooms/' + roomId + '/currentWord').transaction(w => {
-        if (w !== guessedWord) return;
-        return nextWord;
-      }, (err, committed) => {
-        if (committed) {
-          db.ref('rooms/' + roomId + '/wordsGuessed').transaction(n => (n || 0) + 1);
-          db.ref('rooms/' + roomId + '/players/' + currentDrawerId + '/score').transaction(n => (n || 0) + 1);
-          db.ref('rooms/' + roomId + '/players/' + myId + '/guessScore').transaction(n => (n || 0) + 1);
-          db.ref('rooms/' + roomId + '/lastGuessed').set({ word: guessedWord, ts: Date.now() });
-          db.ref('rooms/' + roomId + '/strokes').remove();
-        }
+      db.ref('rooms/' + roomId + '/usedWords').once('value').then(usedSnap => {
+        const usedList = usedSnap.val() || [];
+        const nextWord = pickWord(usedList);
+        db.ref('rooms/' + roomId + '/currentWord').transaction(w => {
+          if (w !== guessedWord) return;
+          return nextWord;
+        }, (err, committed) => {
+          if (committed) {
+            db.ref('rooms/' + roomId + '/wordsGuessed').transaction(n => (n || 0) + 1);
+            db.ref('rooms/' + roomId + '/players/' + currentDrawerId + '/score').transaction(n => (n || 0) + 1);
+            db.ref('rooms/' + roomId + '/players/' + myId + '/guessScore').transaction(n => (n || 0) + 1);
+            db.ref('rooms/' + roomId + '/usedWords').transaction(list => (list || []).concat([nextWord]));
+            db.ref('rooms/' + roomId + '/lastGuessed').set({ word: guessedWord, ts: Date.now() });
+            db.ref('rooms/' + roomId + '/flashEvent').set({ word: guessedWord, guesser: myName, type: 'guessed', ts: Date.now() });
+            db.ref('rooms/' + roomId + '/strokes').remove();
+          }
+        });
       });
     }
   });
+}
+
+// ── TOOL SELECTION ────────────────────────────────────────────────
+function setTool(tool) {
+  activeTool = tool;
+  document.getElementById('btn-pencil').style.background = tool === 'pencil' ? '#eeedfe' : '';
+  document.getElementById('btn-pencil').style.borderColor = tool === 'pencil' ? '#7f77dd' : '';
+  document.getElementById('btn-bucket').style.background = tool === 'bucket' ? '#eeedfe' : '';
+  document.getElementById('btn-bucket').style.borderColor = tool === 'bucket' ? '#7f77dd' : '';
+  const canvas = document.getElementById('canvas');
+  if (canvas) canvas.style.cursor = tool === 'bucket' ? 'cell' : 'crosshair';
+}
+
+// ── FLOOD FILL ─────────────────────────────────────────────────────
+function hexToRgb(hex) {
+  const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+  return [r, g, b, 255];
+}
+
+function colorsMatch(a, b, tolerance) {
+  return Math.abs(a[0]-b[0]) + Math.abs(a[1]-b[1]) + Math.abs(a[2]-b[2]) + Math.abs(a[3]-b[3]) <= tolerance;
+}
+
+function floodFill(canvas, startX, startY, fillColor) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  const imageData = ctx.getImageData(0, 0, w, h);
+  const data = imageData.data;
+  const fill = hexToRgb(fillColor);
+
+  const idx = (x, y) => (y * w + x) * 4;
+  const getPixel = i => [data[i], data[i+1], data[i+2], data[i+3]];
+
+  const si = idx(startX, startY);
+  const target = getPixel(si);
+
+  if (colorsMatch(target, fill, 10)) return;
+
+  const stack = [[startX, startY]];
+  const visited = new Uint8Array(w * h);
+
+  while (stack.length) {
+    const [x, y] = stack.pop();
+    if (x < 0 || x >= w || y < 0 || y >= h) continue;
+    const i = idx(x, y);
+    const flat = y * w + x;
+    if (visited[flat]) continue;
+    if (!colorsMatch(getPixel(i), target, 30)) continue;
+    visited[flat] = 1;
+    data[i] = fill[0]; data[i+1] = fill[1]; data[i+2] = fill[2]; data[i+3] = 255;
+    stack.push([x+1,y],[x-1,y],[x,y+1],[x,y-1]);
+  }
+  ctx.putImageData(imageData, 0, 0);
 }
 
 // ── CANVAS (DRAWER) ───────────────────────────────────────────────
@@ -612,8 +787,20 @@ function getPos(canvas, e) {
 
 function startStroke(e) {
   e.preventDefault();
+  const canvas = document.getElementById('canvas');
+  const { x, y } = getPos(canvas, e);
+
+  if (activeTool === 'bucket') {
+    const px = Math.round(x), py = Math.round(y);
+    floodFill(canvas, px, py, drawColor);
+    // Sync fill to Firebase as a special stroke
+    db.ref('rooms/' + roomId + '/strokes').push({
+      type: 'fill', color: drawColor, x: px, y: py, ts: Date.now()
+    });
+    return;
+  }
+
   painting = true;
-  const { x, y } = getPos(this, e);
   lastX = x; lastY = y;
   activeStrokeKey = db.ref('rooms/' + roomId + '/strokes').push().key;
   db.ref('rooms/' + roomId + '/strokes/' + activeStrokeKey).set({
@@ -671,6 +858,10 @@ function redrawView(strokes) {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   if (!strokes) return;
   Object.values(strokes).forEach(stroke => {
+    if (stroke.type === 'fill') {
+      floodFill(canvas, stroke.x, stroke.y, stroke.color);
+      return;
+    }
     const pts = stroke.points || [];
     if (pts.length < 2) return;
     ctx.beginPath();
@@ -799,7 +990,7 @@ function backToLobby() {
     const updates = {};
     Object.keys(snap.val() || {}).forEach(pid => { updates[pid + '/score'] = 0; updates[pid + '/guessScore'] = 0; });
     db.ref('rooms/' + roomId + '/players').update(updates).then(() => {
-      db.ref('rooms/' + roomId).update({ status: 'lobby', currentTurn: 0, strokes: null, guesses: null });
+      db.ref('rooms/' + roomId).update({ status: 'lobby', currentTurn: 0, strokes: null, guesses: null, usedWords: null });
       listenLobby();
       showScreen('lobby');
     });
